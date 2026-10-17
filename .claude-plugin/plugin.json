@@ -1,0 +1,1 @@
+{ "name": "quota-band", "version": "0.1.0", "description": "Zeigt 5h-Limit, Wochenlimit und Kontext-Füllstand als Zeile über dem Prompt", "author": { "name": "Georg" }, "types": "./types/index.d.ts" }
