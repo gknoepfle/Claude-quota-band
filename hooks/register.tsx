@@ -36,17 +36,34 @@ export const left = (resetsAt: string | undefined, now: number): string => {
   return `${mm}m`
 }
 
-async function refresh($: EngineInterface): Promise<void> {
-  const usage = await $.session.usage()
+async function measure($: EngineInterface): Promise<QuotaSnapshot> {
   const now = await $.clock.now()
-  const next: QuotaSnapshot = {
-    limits: usage.rateLimits.map(
-      (r): QuotaLimit => ({ kind: r.kind, percentUsed: r.percentUsed, resetsAt: r.resetsAt }),
-    ),
-    contextPercent: usage.context.percent,
-    now,
+  try {
+    const usage = await $.session.usage()
+    return {
+      limits: (usage.rateLimits ?? []).map(
+        (r): QuotaLimit => ({ kind: r.kind, percentUsed: r.percentUsed, resetsAt: r.resetsAt }),
+      ),
+      contextPercent: usage.context?.percent,
+      now,
+    }
+  } catch (err) {
+    return { limits: [], now, error: String(err) }
   }
+}
+
+export const summary = (snap: QuotaSnapshot): string => {
+  const parts = snap.limits.map(
+    l => `${label(l.kind)} ${Math.round(l.percentUsed)}%${l.resetsAt ? ` ↻ ${left(l.resetsAt, snap.now)}` : ''}`,
+  )
+  if (typeof snap.contextPercent === 'number') parts.push(`Kontext ${snap.contextPercent}%`)
+  return parts.length ? parts.join('  ·  ') : 'Quota: Werte nach der ersten Antwort'
+}
+
+async function refresh($: EngineInterface): Promise<void> {
+  const next = await measure($)
   await update($, snapshot, () => next)
+  $.ui.status(summary(next))
 }
 
 export const register: Register = on => {
@@ -64,17 +81,27 @@ export const register: Register = on => {
     return result
   })
 
+  on('prompt.submit', async ($, e, next) => {
+    const result = await next(e)
+    await refresh($)
+    return result
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const snap = await read($, snapshot)
-    if (e.props.hasSurvey || snap === null) return next(e)
+    if (e.props.hasSurvey) return next(e)
+    const snap = (await read($, snapshot)) ?? (await measure($))
 
     const { Box, Text } = $.ui.resolve(e)
 
     return (
       <Box flexDirection="row" gap={2}>
-        {snap.limits.length === 0 ? (
+        {snap.error ? (
+          <Text color="error" mono size="footnote">
+            Quota nicht lesbar: {snap.error}
+          </Text>
+        ) : snap.limits.length === 0 ? (
           <Text dimColor mono size="footnote">
-            Limits erscheinen nach der ersten Antwort
+            Quota: Limits erscheinen nach der ersten Antwort
           </Text>
         ) : (
           snap.limits.map(l => (
