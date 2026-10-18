@@ -66,10 +66,14 @@ async function refresh($: EngineInterface): Promise<void> {
   $.ui.status(summary(next))
 }
 
+const PANE = 'quota-band'
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     await refresh($)
+    await $.command.register({ name: 'quota', description: 'Quota-Anzeige (5h, Woche, Kontext) als Panel öffnen' })
+    void $.ui.open({ id: PANE, title: 'Quota' })
     // Countdown einmal pro Minute nachziehen
     $.clock.every(60_000, () => refresh($))
     return result
@@ -83,7 +87,8 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     const result = await next(e)
-    await refresh($)
+    // nie das Absenden blockieren
+    refresh($).catch(() => undefined)
     return result
   })
 
@@ -120,6 +125,44 @@ export const register: Register = on => {
             <Text dimColor>Kontext </Text>
             <Text color={color(snap.contextPercent)} tabular>
               {snap.contextPercent}%
+            </Text>
+          </Text>
+        ) : null}
+      </Box>
+    )
+  })
+  on('command.run', { command: 'quota' }, async $ => {
+    await refresh($)
+    await $.ui.open({ id: PANE, title: 'Quota' })
+    return { text: 'Quota-Panel geöffnet.' }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const snap = (await read($, snapshot)) ?? (await measure($))
+    const { Box, Text } = $.ui.resolve(e)
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        {snap.error ? <Text color="error">Quota nicht lesbar: {snap.error}</Text> : null}
+        {!snap.error && snap.limits.length === 0 ? (
+          <Text dimColor>Limits erscheinen nach der ersten Antwort.</Text>
+        ) : null}
+        {snap.limits.map(l => (
+          <Text key={l.kind} mono>
+            <Text dimColor>{label(l.kind).padEnd(7)}</Text>
+            <Text color={color(l.percentUsed)}>{meter(l.percentUsed, 12)} </Text>
+            <Text color={color(l.percentUsed)} weight="semibold" tabular>
+              {String(Math.round(l.percentUsed)).padStart(3)}%
+            </Text>
+            {l.resetsAt ? <Text dimColor>  ↻ {left(l.resetsAt, snap.now)}</Text> : null}
+          </Text>
+        ))}
+        {typeof snap.contextPercent === 'number' ? (
+          <Text key="ctx" mono>
+            <Text dimColor>{'Kontext'.padEnd(7)}</Text>
+            <Text color={color(snap.contextPercent)}>{meter(snap.contextPercent, 12)} </Text>
+            <Text color={color(snap.contextPercent)} tabular>
+              {String(snap.contextPercent).padStart(3)}%
             </Text>
           </Text>
         ) : null}
